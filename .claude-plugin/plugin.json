@@ -1,0 +1,9 @@
+{
+  "name": "x",
+  "version": "0.1.0",
+  "description": "Post to X (Twitter) directly from Claude Code - text and images",
+  "author": {
+    "name": "OpenWLAN"
+  },
+  "license": "MIT"
+}
