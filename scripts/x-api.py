@@ -185,7 +185,12 @@ def get_api_headers(access_token):
 
 
 def upload_media(access_token, file_path):
-    """Upload media to X and return the media ID."""
+    """Upload media to X and return the media ID.
+
+    Uses v2 JSON endpoint with base64-encoded media field.
+    The v1.1 multipart endpoint requires OAuth 1.0a and returns 403
+    with OAuth 2.0 Bearer tokens.
+    """
     file_path = Path(file_path).resolve()
     if not file_path.exists():
         print(f"ERROR=File not found: {file_path}", file=sys.stderr)
@@ -193,30 +198,27 @@ def upload_media(access_token, file_path):
 
     mime_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
     file_bytes = file_path.read_bytes()
+    file_size = len(file_bytes)
 
-    # Build multipart/form-data body
-    boundary = uuid.uuid4().hex
-    body = b""
+    if file_size > 5 * 1024 * 1024:
+        print(f"ERROR=File too large ({file_size} bytes). Max 5MB for images.",
+              file=sys.stderr)
+        sys.exit(1)
 
-    # media_data field (base64 encoded)
+    url = f"{API_BASE}/media/upload"
     media_b64 = base64.b64encode(file_bytes).decode()
-    body += f"--{boundary}\r\n".encode()
-    body += b'Content-Disposition: form-data; name="media_data"\r\n\r\n'
-    body += media_b64.encode() + b"\r\n"
 
-    # media_category field
-    body += f"--{boundary}\r\n".encode()
-    body += b'Content-Disposition: form-data; name="media_category"\r\n\r\n'
-    body += b"tweet_image\r\n"
-
-    body += f"--{boundary}--\r\n".encode()
+    payload = {
+        "media": media_b64,
+        "media_category": "tweet_image",
+    }
 
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Type": "application/json",
     }
 
-    url = f"{API_BASE}/media/upload"
+    body = json.dumps(payload).encode()
 
     ctx = ssl.create_default_context()
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
@@ -225,7 +227,9 @@ def upload_media(access_token, file_path):
         with urllib.request.urlopen(req, context=ctx) as resp:
             result = json.loads(resp.read().decode())
             media_data = result.get("data", result)
-            media_id = str(media_data.get("id", media_data.get("media_id_string", "")))
+            media_id = str(media_data.get("id",
+                                          media_data.get("media_id_string",
+                                                         media_data.get("media_id", ""))))
             return media_id
     except urllib.error.HTTPError as e:
         error_body = e.read().decode() if e.fp else ""
