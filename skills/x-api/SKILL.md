@@ -132,9 +132,25 @@ Each PNG must be < 5 MB (JPG/PNG/GIF/WEBP). Save the X-native set to its own dir
 ## Free Tier Limits
 
 - 1,500 posts per month
-- Write-only (cannot read timelines)
+- Primarily write-oriented: cannot read other users' timelines or search broadly
+- CAN read engagement metrics for YOUR OWN posts via `GET /2/tweets/:id` (verified working on the free tier with `public_metrics`, and even `non_public_metrics` / `organic_metrics`). Use `get-metrics` (below).
 - Media upload available with `media.write` scope
 - Rate limit: measured in 24-hour windows
+
+## Reading post metrics / engagement
+
+Use the `get-metrics` command to check how a post is doing:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/x-api.py get-metrics <tweet_id>
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/x-api.py get-metrics <tweet_id> --detailed
+```
+
+- Public metrics returned: `LIKES`, `REPOSTS`, `QUOTES`, `REPLIES`, `BOOKMARKS`, and `IMPRESSIONS` (impressions appear only for the authenticated user's own posts).
+- `--detailed` also requests `non_public_metrics` + `organic_metrics` (profile clicks, engagements). These need the post to be your own and recent; on an insufficient access tier the command logs a NOTE and falls back to public metrics only instead of failing.
+- Endpoint: `GET /2/tweets/:id?tweet.fields=public_metrics,created_at[,non_public_metrics,organic_metrics]`.
+- A `403` means the app's access tier cannot read metrics (upgrade to Basic with `tweet.read` + `users.read`); the command prints a tier-aware hint. `404` = deleted/protected/wrong ID.
+- Engagement needs HOURS to accumulate. Checking immediately after posting will read near-zero; wait before drawing conclusions.
 
 ## Common Errors
 
@@ -165,4 +181,4 @@ Each PNG must be < 5 MB (JPG/PNG/GIF/WEBP). Save the X-native set to its own dir
 
 The X API scripts are at `${CLAUDE_PLUGIN_ROOT}/scripts/`:
 - `oauth-server.py` - OAuth 2.0 PKCE flow with local callback server and auto token refresh
-- `x-api.py` - Post creation, media upload, auth check, token refresh
+- `x-api.py` - Post creation, media upload, auth check, token refresh, and `get-metrics` (engagement)

@@ -12,6 +12,8 @@ Usage:
     python3 x-api.py post-image --text "Check this" --images /path/to/img.png
     python3 x-api.py upload-media --file /path/to/image.png
     python3 x-api.py check-auth
+    python3 x-api.py get-metrics 1234567890
+    python3 x-api.py get-metrics 1234567890 --detailed
 """
 
 import argparse
@@ -265,6 +267,118 @@ def resolve_text(args):
     return args.text
 
 
+def _http_get(url, access_token):
+    """GET a URL with the bearer token. Returns (status_code, parsed_body).
+
+    Unlike api_request(), this does NOT exit on HTTP error - it returns the
+    status code and parsed body so the caller can give tier-aware guidance
+    (e.g. a 403 on the free, write-only tier).
+    """
+    ctx = ssl.create_default_context()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, context=ctx) as resp:
+            body = resp.read().decode()
+            return resp.status, (json.loads(body) if body else {})
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode() if e.fp else ""
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            parsed = {"raw": raw}
+        return e.code, parsed
+
+
+def _print_api_errors(body):
+    """Surface human-readable error messages from an X API error body."""
+    if not isinstance(body, dict):
+        return
+    for err in body.get("errors", []) or []:
+        msg = err.get("detail") or err.get("message") or err.get("title")
+        if msg:
+            print(f"DETAILS={msg}", file=sys.stderr)
+    if "detail" in body and "errors" not in body:
+        print(f"DETAILS={body['detail']}", file=sys.stderr)
+
+
+def cmd_get_metrics(args):
+    """Fetch engagement metrics (public, and optionally non-public) for a post."""
+    settings = load_settings()
+    settings = ensure_valid_token(settings)
+    token = settings["access_token"]
+    tweet_id = args.tweet_id
+
+    fields = ["public_metrics", "created_at"]
+    if args.detailed:
+        # Owner-only, recent-post-only, needs elevated access. Falls back below.
+        fields += ["non_public_metrics", "organic_metrics"]
+    params = urllib.parse.urlencode({"tweet.fields": ",".join(fields)})
+    url = f"{API_BASE}/tweets/{tweet_id}?{params}"
+
+    status, body = _http_get(url, token)
+
+    # Detailed (non-public/organic) metrics need Ads-level access and the
+    # authenticated user's own recent post. Fall back to public-only on 403.
+    if status == 403 and args.detailed:
+        print("NOTE=detailed metrics unavailable on this access tier; "
+              "retrying with public metrics only", file=sys.stderr)
+        params = urllib.parse.urlencode({"tweet.fields": "public_metrics,created_at"})
+        url = f"{API_BASE}/tweets/{tweet_id}?{params}"
+        status, body = _http_get(url, token)
+
+    if status == 403:
+        print("ERROR=Reading metrics is not permitted on this API access tier (403).",
+              file=sys.stderr)
+        print("DETAILS=The free tier is write-only. Upgrade the app to Basic tier "
+              "(scopes tweet.read + users.read) to read public_metrics.",
+              file=sys.stderr)
+        _print_api_errors(body)
+        sys.exit(1)
+    if status == 404:
+        print(f"ERROR=Post {tweet_id} not found (404): deleted, protected, or wrong ID.",
+              file=sys.stderr)
+        sys.exit(1)
+    if status == 429:
+        print("ERROR=Rate limited (429). Wait and retry.", file=sys.stderr)
+        sys.exit(1)
+    if status != 200:
+        print(f"ERROR=Metrics request failed: HTTP {status}", file=sys.stderr)
+        _print_api_errors(body)
+        sys.exit(1)
+
+    data = body.get("data")
+    if not data:
+        print("ERROR=No tweet data returned.", file=sys.stderr)
+        _print_api_errors(body)
+        sys.exit(1)
+
+    resolved_id = data.get("id", tweet_id)
+    print(f"TWEET_ID={resolved_id}")
+    if data.get("created_at"):
+        print(f"CREATED_AT={data['created_at']}")
+    username = settings.get("username", "")
+    if username:
+        print(f"URL=https://x.com/{username}/status/{resolved_id}")
+
+    pm = data.get("public_metrics", {}) or {}
+    print(f"LIKES={pm.get('like_count', 0)}")
+    print(f"REPOSTS={pm.get('retweet_count', 0)}")
+    print(f"QUOTES={pm.get('quote_count', 0)}")
+    print(f"REPLIES={pm.get('reply_count', 0)}")
+    print(f"BOOKMARKS={pm.get('bookmark_count', 0)}")
+    # impression_count is only returned for the authenticated user's own posts.
+    if "impression_count" in pm:
+        print(f"IMPRESSIONS={pm['impression_count']}")
+
+    for block_name, label in (("non_public_metrics", "NONPUBLIC"),
+                              ("organic_metrics", "ORGANIC")):
+        block = data.get(block_name)
+        if isinstance(block, dict):
+            for key, val in block.items():
+                print(f"{label}_{key.upper()}={val}")
+
+
 def cmd_check_auth(args):
     """Check authentication status."""
     settings = load_settings()
@@ -375,6 +489,14 @@ def main():
     p = sub.add_parser("upload-media", help="Upload media and get its ID")
     p.add_argument("--file", required=True, help="Path to media file")
 
+    # get-metrics
+    p = sub.add_parser("get-metrics",
+                       help="Get engagement metrics for a post (needs read access)")
+    p.add_argument("tweet_id", help="The post/tweet ID to fetch metrics for")
+    p.add_argument("--detailed", action="store_true",
+                   help="Also request non-public/organic metrics "
+                        "(needs elevated access; falls back to public on 403)")
+
     args = parser.parse_args()
     cmd_map = {
         "check-auth": cmd_check_auth,
@@ -382,6 +504,7 @@ def main():
         "post-image": cmd_post_image,
         "upload-media": cmd_upload_media,
         "refresh-token": cmd_refresh_token,
+        "get-metrics": cmd_get_metrics,
     }
     cmd_map[args.command](args)
 
