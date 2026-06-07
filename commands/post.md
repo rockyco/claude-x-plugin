@@ -33,12 +33,26 @@ Based on the user's request and any arguments provided, determine the post type:
 
 If the user's intent is unclear, use AskUserQuestion to clarify.
 
-## Step 3: Prepare content
+## Step 3: Craft the content (ALWAYS, every time)
 
-Review the post text with the user before publishing:
-- Show them the full text that will be posted
+Load the `x-api` skill and apply its "Writing an attractive, readable post" and "Diagrams for
+X posts" sections. Do this on EVERY post, not just the first.
+
+**Write the text for X.** Never paste an article abstract or a post from another channel
+verbatim - re-cut the source into an X-native post: hook the first line (surprising stat /
+bold claim / question / value prop), one idea per line with blank-line breaks, keep it tight
+and scannable, 3 or fewer hashtags at the end, mirror the source's honest claim-framing.
+
+**Build X-native diagrams when the post carries images.** Do not reuse carousel / article
+slides as-is. Use the `svg-diagram` skill to produce an X-specific set: strip page numbers
+(`N / M`) and `swipe →` prompts, keep headline numbers centered (X crops previews center-out),
+use ONE consistent aspect ratio for all images, render PNGs with `rsvg-convert -z 2 -b white`,
+and save them to their own dir (e.g. `docs/x/<slug>/images/`). Order them to read as a sequence.
+
+**Then review with the user before publishing:**
+- Show the full text that will be posted
 - Note the character count (280 for free accounts, 25,000 for premium)
-- List any images that will be uploaded
+- List the images that will be uploaded (and confirm they are the X-native set, not the source slides)
 - Ask for confirmation before publishing
 
 ## Step 4: Publish
